@@ -72,42 +72,43 @@ class A3C(A2C):
             # Correctly cast param to the correct device.
             shared_param._grad = param.grad.to(shared_param.device)
 
-    def _multiprocess_learning(self, rank, *args):
-        host_torch_seed = self.seed if self.seed else torch.seed
+    @staticmethod
+    def _multiprocess_learning(rank, *args):
+        seed, base_log_dir, shared_momentum, shared_policy, parent_policy, child_args, child_kwargs, env, learn_args, learn_kwargs = args
+
+
+        host_torch_seed = seed if seed else torch.seed
         host_torch_seed += rank
 
         torch.manual_seed(host_torch_seed)
 
-        if self.base_log_dir:
-            log_dir = os.path.join(self.base_log_dir, f"Process_{rank}")
+        if base_log_dir:
+            log_dir = os.path.join(base_log_dir, f"Process_{rank}")
         else:
             log_dir = None
 
-        if not self.shared_momentum:
-            self.shared_policy.optimizer = torch.optim.Adam(
-                self.shared_policy.parameters(),
-                lr=self.lr_schedule(1),
+        if not shared_momentum:
+            shared_policy.optimizer = torch.optim.Adam(
+                shared_policy.parameters(),
+                lr=7e-4,
                 betas=(0.9, 0.999),
                 eps=1e-5,
                 weight_decay=0
             )
 
         # Avoid random change
-        child_args = deepcopy(self._parent_args)
-        child_kwargs = deepcopy(self._parent_kwargs)
-        child_kwargs["shared_policy"] = self.shared_policy
+        child_kwargs["shared_policy"] = shared_policy
 
-        env = deepcopy(self.env)
+        env = deepcopy(env)
         env = Monitor(env, filename=log_dir)
-        model = A3C(deepcopy(self.policy), env, *child_args, **child_kwargs)
+        model = A3C(deepcopy(parent_policy), env, *child_args, **child_kwargs)
 
-        learn_kwargs = deepcopy(self._learn_kwargs)
         if "callback" in learn_kwargs:
             learn_kwargs["callback"].log_dir = log_dir
         else:
             learn_kwargs["callback"] = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
 
-        model._learn(*args, **learn_kwargs)
+        model._learn(*learn_args, **learn_kwargs)
 
     def learn(self, *args, **kwargs):
         nprocs = kwargs.pop("nprocs", 1)
@@ -116,7 +117,19 @@ class A3C(A2C):
 
         kwargs["is_child"] = True
         self._learn_kwargs = kwargs
-        args = (lock, counter) + args
+
+        args = (
+            self.seed,
+            self.base_log_dir,
+            self.shared_momentum,
+            self.shared_policy,
+            self.policy,
+            deepcopy(self._parent_args),
+            deepcopy(self._parent_kwargs),
+            self.env,
+            (lock, counter) + args,
+            kwargs
+        )
         torch.multiprocessing.spawn(self._multiprocess_learning, args=args, nprocs=nprocs)
 
 

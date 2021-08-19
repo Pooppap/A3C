@@ -32,14 +32,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--shared-momentum",
-    type=bool,
     dest="shared_momentum",
     action="store_true",
     help="Use an optimizer without shared momentum. (default: True)"
 )
 parser.add_argument(
     "--no-shared-momentum",
-    type=bool,
     dest="shared_momentum",
     action="store_false",
     help="Don't use an optimizer without shared momentum."

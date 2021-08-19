@@ -4,11 +4,11 @@ import torch
 
 from gym import spaces
 from copy import deepcopy
-from __util__ import SharedAdam
+from .__util__ import SharedAdam
 from stable_baselines3 import A2C
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import safe_mean
-from __util__ import SaveOnBestTrainingRewardCallback
+from .__util__ import SaveOnBestTrainingRewardCallback
 from stable_baselines3.common.utils import explained_variance 
 
 

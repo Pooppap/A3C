@@ -68,3 +68,7 @@ def main(args):
             del model
 
     train_a3c_dir(repetitions=10)
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    main(args)

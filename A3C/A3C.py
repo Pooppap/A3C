@@ -1,4 +1,5 @@
 import os
+import gym
 import time
 import torch
 
@@ -99,7 +100,7 @@ class A3C(A2C):
         # Avoid random change
         child_kwargs["shared_policy"] = shared_policy
 
-        env = deepcopy(env)
+        env = gym.make('LunarLander-v2')
         env = Monitor(env, filename=log_dir)
         model = A3C(deepcopy(parent_policy), env, *child_args, **child_kwargs)
 

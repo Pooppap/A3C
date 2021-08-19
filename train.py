@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description='A3C')
 parser.add_argument(
     "--seed",
     type=int,
-    default=None,
+    default=2021,
     help="Random seed (default: None)"
 )
 parser.add_argument(
@@ -48,7 +48,7 @@ parser.set_defaults(shared_momentum=True)
 
 
 def main(args):
-    torch.manual_seed(2021)
+    torch.manual_seed(args.seed)
 
     def make_a3c_dir(repetition):
         base_log_dir = os.path.join(args.base_log_dir, f"rep_{repetition}")

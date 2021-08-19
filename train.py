@@ -59,7 +59,7 @@ def main(args):
     def train_a3c_dir(repetitions):
         for repetition in range(repetitions):
             base_log_dir, model = make_a3c_dir(repetition=repetition)
-            callback = SaveOnBestTrainingRewardCallback(check_freq=1000)
+            callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=None)
             model.learn(total_timesteps=30000, log_interval=10, callback=callback)
             model.save(os.path.join(
                 base_log_dir,

@@ -13,11 +13,11 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
         super().__init__(verbose)
         self.check_freq = check_freq
         self.log_dir = log_dir
-        self.save_path = os.path.join(log_dir, 'best_model')
         self.best_mean_reward = -np.inf
 
     def _init_callback(self) -> None:
         # Create folder if needed
+        self.save_path = os.path.join(self.log_dir, 'best_model')
         if self.save_path is not None:
             if not os.path.exists(self.save_path):
                 os.makedirs(self.save_path, exist_ok=True)

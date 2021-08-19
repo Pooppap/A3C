@@ -4,11 +4,11 @@ import torch
 
 from gym import spaces
 from copy import deepcopy
+from __util__ import SharedAdam
 from stable_baselines3 import A2C
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import safe_mean
-from stable_baselines3.common.utils import obs_as_tensor
-from stable_baselines3.common.env_util import make_vec_env
+from __util__ import SaveOnBestTrainingRewardCallback
 from stable_baselines3.common.utils import explained_variance 
 
 
@@ -21,28 +21,46 @@ class A3C(A2C):
         **kwargs
     ):
         shared_policy_set = False
-        if "shared_policy" in kwargs:
-            kwargs["policy"] = deepcopy(kwargs["shared_policy"])
-            self.shared_policy = kwargs.pop("shared_policy")
-            # self.shared_policy.optimizer = torch.optim.Adam(self.shared_policy.parameters(), lr=1e-5) # shift optimizer to child memory space
-
-            shared_policy_set = True
 
         if "base_log_dir" in kwargs:
             self.base_log_dir = kwargs.pop("base_log_dir")
         else:
             self.base_log_dir = None
 
+        if "shared_momentum" in kwargs:
+            self.shared_momentum = kwargs.pop("shared_momentum")
+        else:
+            self.shared_momentum = True
+
+        if "shared_policy" in kwargs:
+            kwargs["policy"] = deepcopy(kwargs["shared_policy"])
+            kwargs["policy"].optimizer = None
+            self.shared_policy = kwargs.pop("shared_policy")
+
+        kwargs["_init_setup_model"] = False
         self._parent_args = args
         self._parent_kwargs = kwargs
 
         super().__init__(policy, env, *args, **kwargs)
-        if not shared_policy_set:
-            self.shared_policy = deepcopy(self.policy)
-            # del self.shared_policy.optimizer # No need for global optimizer
+
+        self.policy_kwargs["optimizer_class"] = SharedAdam
+        self.policy_kwargs["optimizer_kwargs"] = dict(betas=(0.9, 0.999), eps=1e-5, weight_decay=0)
+
+        self._setup_model()
+
+    def _setup_model(self):
+        super()._setup_model()
+        if not self.shared_policy:
+            self.shared_policy = self.policy_class(  # pytype:disable=not-instantiable
+                self.observation_space,
+                self.action_space,
+                self.lr_schedule,
+                use_sde=self.use_sde,
+                **self.policy_kwargs  # pytype:disable=not-instantiable
+            )
+            self.shared_policy = self.shared_policy.to(self.device)
             self.shared_policy.share_memory()
-        # else:
-        #     del self.policy.optimizer
+        self.policy.optimizer = None
 
     def ensure_shared_grads(self):
         for param, shared_param in zip(self.policy.parameters(), self.shared_policy.parameters()):
@@ -56,11 +74,38 @@ class A3C(A2C):
         host_torch_seed = self.seed if self.seed else torch.seed
         host_torch_seed += rank
 
-        env = deepcopy(self.env)
-        env = Monitor(env, filename=os.path.join(self.base_log_dir, f"Process_{rank}"))
+        torch.manual_seed(host_torch_seed)
 
-        model = A3C(deepcopy(self.policy), env, *self._parent_args, shared_policy=self.shared_policy, **self._parent_kwargs)
-        model._learn(*args, **self._learn_kwargs)
+        if self.base_log_dir:
+            log_dir = os.path.join(self.base_log_dir, f"Process_{rank}")
+        else:
+            log_dir = None
+
+        if not self.shared_momentum:
+            self.shared_policy.optimizer = torch.optim.Adam(
+                self.shared_policy.parameters(),
+                lr=self.lr_schedule(1),
+                betas=(0.9, 0.999),
+                eps=1e-5,
+                weight_decay=0
+            )
+
+        # Avoid random change
+        child_args = deepcopy(self._parent_args)
+        child_kwargs = deepcopy(self._parent_kwargs)
+        child_kwargs["shared_policy"] = self.shared_policy
+
+        env = deepcopy(self.env)
+        env = Monitor(env, filename=log_dir)
+        model = A3C(deepcopy(self.policy), env, *child_args, **child_kwargs)
+
+        learn_kwargs = deepcopy(self._learn_kwargs)
+        if "callback" in learn_kwargs:
+            learn_kwargs["callback"].log_dir = log_dir
+        else:
+            learn_kwargs["callback"] = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
+
+        model._learn(*args, **learn_kwargs)
 
     def learn(self, *args, **kwargs):
         nprocs = kwargs.pop("nprocs", 1)

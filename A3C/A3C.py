@@ -37,6 +37,7 @@ class A3C(A2C):
             kwargs["policy"] = deepcopy(kwargs["shared_policy"])
             kwargs["policy"].optimizer = None
             self.shared_policy = kwargs.pop("shared_policy")
+            del kwargs["policy"]
         else:
             self.shared_policy = None
 

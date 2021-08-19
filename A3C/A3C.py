@@ -116,7 +116,7 @@ class A3C(A2C):
 
         kwargs["is_child"] = True
         self._learn_kwargs = kwargs
-        args = [lock, counter] + args
+        args = (lock, counter) + args
         torch.multiprocessing.spawn(self._multiprocess_learning, args=args, nprocs=nprocs)
 
 

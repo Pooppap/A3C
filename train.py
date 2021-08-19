@@ -52,7 +52,7 @@ def main(args):
         base_log_dir = os.path.join(args.base_log_dir, f"rep_{repetition}")
         os.makedirs(base_log_dir, exist_ok=True)
         env = gym.make('LunarLander-v2')
-        model = A3C('MlpPolicy', env, verbose=0, base_log_dir=base_log_dir, shared_momentum=args.shared_momentum, seed=torch.seed())
+        model = A3C('MlpPolicy', env, verbose=0, base_log_dir=base_log_dir, shared_momentum=args.shared_momentum, seed=args.seed)
 
         return base_log_dir, model
 

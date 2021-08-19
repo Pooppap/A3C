@@ -102,7 +102,8 @@ class A3C(A2C):
 
         env = gym.make('LunarLander-v2')
         env = Monitor(env, filename=log_dir)
-        model = A3C(deepcopy(parent_policy), env, *child_args, **child_kwargs)
+        parent_policy = deepcopy(parent_policy)
+        model = A3C(parent_policy, env, *child_args, **child_kwargs)
 
         if "callback" in learn_kwargs:
             learn_kwargs["callback"].log_dir = log_dir

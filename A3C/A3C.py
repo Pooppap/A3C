@@ -2,15 +2,16 @@ import os
 import gym
 import time
 import torch
+import multiprocessing
 
 from gym import spaces
 from copy import deepcopy
-from .__util__ import SharedAdam
+from .__util__ import SharedRMSprop
 from stable_baselines3 import A2C
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import safe_mean
 from .__util__ import SaveOnBestTrainingRewardCallback
-from stable_baselines3.common.utils import explained_variance 
+from stable_baselines3.common.utils import explained_variance
 
 
 class A3C(A2C):
@@ -21,7 +22,6 @@ class A3C(A2C):
         *args,
         **kwargs
     ):
-        shared_policy_set = False
 
         if "base_log_dir" in kwargs:
             self.base_log_dir = kwargs.pop("base_log_dir")
@@ -45,10 +45,12 @@ class A3C(A2C):
         self._parent_args = args
         self._parent_kwargs = kwargs
 
+        self._env_id = env.spec.id
+
         super().__init__(policy, env, *args, **kwargs)
 
-        self.policy_kwargs["optimizer_class"] = SharedAdam
-        self.policy_kwargs["optimizer_kwargs"] = dict(betas=(0.9, 0.999), eps=1e-5, weight_decay=0)
+        self.policy_kwargs["optimizer_class"] = SharedRMSprop
+        self.policy_kwargs["optimizer_kwargs"] = dict(alpha=0.99, eps=1e-5, weight_decay=0)
 
         self._setup_model()
 
@@ -64,7 +66,7 @@ class A3C(A2C):
             )
             self.shared_policy = self.shared_policy.to(self.device)
             self.shared_policy.share_memory()
-        self.policy.optimizer = None
+        # self.policy.optimizer = None
 
     def ensure_shared_grads(self):
         for param, shared_param in zip(self.policy.parameters(), self.shared_policy.parameters()):
@@ -76,8 +78,8 @@ class A3C(A2C):
 
     @staticmethod
     def _multiprocess_learning(rank, *args):
-        seed, base_log_dir, shared_momentum, shared_policy, parent_policy, child_args, child_kwargs, env, learn_args, learn_kwargs = args
-
+        (seed, base_log_dir, shared_momentum, shared_policy,
+        env_id, child_args, child_kwargs, learn_args, learn_kwargs) = args
 
         host_torch_seed = seed if seed else torch.seed
         host_torch_seed += rank
@@ -90,23 +92,25 @@ class A3C(A2C):
             log_dir = None
 
         if not shared_momentum:
-            shared_policy.optimizer = torch.optim.Adam(
+            shared_policy.optimizer = torch.optim.RMSprop(
                 shared_policy.parameters(),
                 lr=7e-4,
-                betas=(0.9, 0.999),
+                alpha=0.99,
                 eps=1e-5,
                 weight_decay=0
             )
 
         # Avoid random change
         child_kwargs["shared_policy"] = shared_policy
+        child_kwargs["device"] = "auto"
 
-        env = gym.make('LunarLander-v2')
+        env = gym.make(env_id)
+        _ = env.reset()
         env = Monitor(env, filename=log_dir)
-        parent_policy = deepcopy(parent_policy)
-        model = A3C(parent_policy, env, *child_args, **child_kwargs)
+        model = A3C(shared_policy.__class__, env, *child_args, **child_kwargs)
 
         if "callback" in learn_kwargs:
+            learn_kwargs["callback"] = deepcopy(learn_kwargs["callback"])
             learn_kwargs["callback"].log_dir = log_dir
         else:
             learn_kwargs["callback"] = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
@@ -115,10 +119,9 @@ class A3C(A2C):
 
     def learn(self, *args, **kwargs):
         nprocs = kwargs.pop("nprocs", 1)
-        lock = torch.multiprocessing.Lock()
-        counter = torch.multiprocessing.Value('i', 0)
+        # Cause crash
+        # lock = torch.multiprocessing.Lock()
 
-        kwargs["is_child"] = True
         self._learn_kwargs = kwargs
 
         args = (
@@ -126,15 +129,14 @@ class A3C(A2C):
             self.base_log_dir,
             self.shared_momentum,
             self.shared_policy,
-            self.policy,
-            deepcopy(self._parent_args),
-            deepcopy(self._parent_kwargs),
-            self.env,
-            (lock, counter) + args,
+            self._env_id,
+            self._parent_args,
+            self._parent_kwargs,
+            args,
             kwargs
         )
-        torch.multiprocessing.spawn(self._multiprocess_learning, args=args, nprocs=nprocs)
 
+        torch.multiprocessing.spawn(self._multiprocess_learning, args=args, nprocs=nprocs)
 
     def _train(self):
         # Switch to train mode (this affects batch norm / dropout)
@@ -197,8 +199,8 @@ class A3C(A2C):
 
     def _learn(
         self,
-        lock,
-        counter,
+        # lock,
+        # counter,
         total_timesteps,
         callback=None,
         log_interval=1,
@@ -218,13 +220,14 @@ class A3C(A2C):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
-
+            
             self.policy.load_state_dict(self.shared_policy.state_dict())
 
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
             
-            with lock:
-                counter.value = self.num_timesteps
+            # with lock:
+            #     # logger.log(f"Process{counter.value}: enter _learn")
+            #     counter.value += 1
 
             if continue_training is False:
                 break
@@ -244,7 +247,7 @@ class A3C(A2C):
                 self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
                 self.logger.dump(step=self.num_timesteps)
 
-            self.train()
+            self._train()
 
         callback.on_training_end()
 

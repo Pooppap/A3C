@@ -20,6 +20,30 @@ parser.add_argument(
     help="how many training processes to use (default: 4)"
 )
 parser.add_argument(
+    "--repetitions",
+    type=int,
+    default=20,
+    help="number of repetitions (default: 20)"
+)
+parser.add_argument(
+    "--total_timesteps",
+    type=int,
+    default=30000,
+    help="number of total timesteps to train (default: 30000)"
+)
+parser.add_argument(
+    "--log_interval",
+    type=int,
+    default=10,
+    help="interval (timesteps) for logging (default: 10)"
+)
+parser.add_argument(
+    "--check_freq",
+    type=int,
+    default=1000,
+    help="Callback checking frequency (default: 1000)"
+)
+parser.add_argument(
     "--base_log_dir",
     type=str,
     default=os.path.join(
@@ -52,22 +76,23 @@ def main(args):
         base_log_dir = os.path.join(args.base_log_dir, f"rep_{repetition}")
         os.makedirs(base_log_dir, exist_ok=True)
         env = gym.make('LunarLander-v2')
-        model = A3C('MlpPolicy', env, verbose=0, base_log_dir=base_log_dir, shared_momentum=args.shared_momentum, seed=args.seed)
+        # Main model live on CPU (preserve precious GPU memory)
+        model = A3C('MlpPolicy', env, verbose=0, base_log_dir=base_log_dir, shared_momentum=args.shared_momentum, seed=args.seed, device="cpu")
 
         return base_log_dir, model
 
     def train_a3c_dir(repetitions):
         for repetition in range(repetitions):
             base_log_dir, model = make_a3c_dir(repetition=repetition)
-            callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=None)
-            model.learn(total_timesteps=30000, log_interval=10, callback=callback)
+            callback = SaveOnBestTrainingRewardCallback(check_freq=args.check_freq, log_dir=None)
+            model.learn(total_timesteps=args.total_timesteps, log_interval=args.log_interval, callback=callback, nprocs=args.nprocs)
             model.save(os.path.join(
                 base_log_dir,
                 "a3c_lunar"
             ))
             del model
 
-    train_a3c_dir(repetitions=10)
+    train_a3c_dir(repetitions=args.repetitions)
 
 if __name__ == '__main__':
     args = parser.parse_args()
